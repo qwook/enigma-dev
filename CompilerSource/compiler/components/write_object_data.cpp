@@ -96,9 +96,18 @@ int lang_CPP::compile_writeObjectData(EnigmaStruct* es, parsed_object* global)
     wto << "#include <map>\n";
 
     //- SCRIPTS
-    std::cout << "== Scripts ==" << std::endl;
     for (int i = 0; i < es->scriptCount; i++) {
-        std::cout << es->scripts[i].name << std::endl;
+        wto << "#define " << es->scripts[i].name << "(arguments...) _SCR_" << es->scripts[i].name << "(arguments)\n";
+
+        parsed_script* scr = scr_lookup[es->scripts[i].name];
+        const char* comma = "";
+        wto << "variant _SCR_" << es->scripts[i].name << "(";
+        scr->globargs=16;//Fixes too many arguments error (scripts can be called dynamically with any number of arguments)
+        for (int argn = 0; argn < scr->globargs; argn++) {
+            wto << comma << "variant argument" << argn << "=0";
+            comma = ", ";
+        }
+        wto << ");\n";
     }
 
     wto <<
@@ -142,19 +151,156 @@ int lang_CPP::compile_writeObjectData(EnigmaStruct* es, parsed_object* global)
     int objcount = parsed.size(), obmx = 0;
     for (std::map<int, parsed_parent> ::iterator i = parsed.begin(); i != parsed.end(); i++) {
         parsed_object *o = i->second.obj;
-        wto << "        {" << o->sprite_index << "," << o->solid << "," << o->visible << "," << o->depth << "," << o->persistent << "," << o->mask_index << "," << o->parent << "," << o->id << "},\n";
+
+        wto << "        {"
+            << o->sprite_index << ","
+            << o->solid << ","
+            << o->visible << ","
+            << o->depth << ","
+            << o->persistent << ","
+            << o->mask_index << ","
+            << o->parent << ","
+            << o->id <<
+        "},\n";
+
         if (o->id >= obmx) obmx = o->id;
     }
-    wto << "   };\n";
-    wto << "   int objectcount = " << objcount << ";\n";
-    wto << "   int obj_idmax = " << obmx+1 << ";\n";
+    wto << "    };\n";
+    wto << "    int objectcount = " << objcount << ";\n";
+    wto << "    int obj_idmax = " << obmx+1 << ";\n";
 
     wto << "}\n";
 
     wto.close();
-    parsed.clear();
 
-    std::cout << "done." << std::endl;
+
+    // todo: replace this
+
+    /* NEXT FILE `******************************************\
+    ** Object functions: events, constructors, other codes.
+    ********************************************************/
+
+        cout << "DBGMSG 1" << endl;
+    wto.open((workdir +"Preprocessor_Environment_Editable/IDE_EDIT_objectfunctionality.h").c_str(),ios_base::out);
+        wto << license;
+
+        cout << "DBGMSG 2" << endl;
+        // Export globalized scripts
+        for (int i = 0; i < es->scriptCount; i++)
+        {
+            parsed_script* scr = scr_lookup[es->scripts[i].name];
+            const char* comma = "";
+            wto << "variant _SCR_" << es->scripts[i].name << "(";
+            for (int argn = 0; argn < scr->globargs; argn++) //it->second gives max argument count used
+            {
+                wto << comma << "variant argument" << argn;
+                comma = ", ";
+            }
+            wto << ")\n{\n  ";
+            parsed_event& upev = scr->pev_global?*scr->pev_global:scr->pev;
+            print_to_file(upev.code,upev.synt,upev.strc,upev.strs,2,wto);
+            wto << "\n  return 0;\n}\n\n";
+        }
+
+        cout << "DBGMSG 3" << endl;
+        // Export everything else
+        for (po_i i = parsed_objects.begin(); i != parsed_objects.end(); i++)
+        {
+        cout << "DBGMSG 4" << endl;
+            for (unsigned ii = 0; ii < i->second->events.size; ii++)
+            if  (i->second->events[ii].code != "")
+            {
+            cout << "DBGMSG 4-1" << endl;
+                const int mid = i->second->events[ii].mainId, id = i->second->events[ii].id;
+                string evname = event_get_function_name(mid,id);
+            bool defined_inherited = false;
+            if (setting::inherit_objects) {
+            po_i parent = parsed_objects.find(i->second->parent);
+            if (parent != parsed_objects.end()) {
+                parsed_parent parent_defined = parsed.find(i->second->parent)->second;
+                if (find(parent_defined.events.begin(), parent_defined.events.end(), i->second->events[ii].mainId) != parent_defined.events.end()) {
+                    wto << "#define event_inherited OBJ_" + parent->second->name + "::myevent_" + evname + "\n";
+                        defined_inherited = true;
+                }
+            }
+        }
+        
+        // cout << "DBGMSG 4-2" << endl;
+        //         wto << "variant enigma::OBJ_" << i->second->name << "::myevent_" << evname << "()\n{\n  ";
+        //             if (!event_execution_uses_default(i->second->events[ii].mainId,i->second->events[ii].id))
+        //                 wto << "enigma::temp_event_scope ENIGMA_PUSH_ITERATOR_AND_VALIDATE(this);\n  ";
+        // cout << "DBGMSG 4-3" << endl;
+        //             if (event_has_sub_check(mid, id))
+        //                 wto << event_get_sub_check_condition(mid, id) << endl;
+        //             if (event_has_const_code(mid, id))
+        //                 wto << event_get_const_code(mid, id) << endl;
+        //             if (event_has_prefix_code(mid, id))
+        //                 wto << event_get_prefix_code(mid, id) << endl;
+        // cout << "DBGMSG 4-4" << endl;
+        //             print_to_file(i->second->events[ii].code,i->second->events[ii].synt,i->second->events[ii].strc,i->second->events[ii].strs,2,wto);
+        //             if (event_has_suffix_code(mid, id))
+        //                 wto << event_get_suffix_code(mid, id) << endl;
+        // cout << "DBGMSG 4-5" << endl;
+        //         wto << "\n  return 0;\n}\n";
+        
+        if (defined_inherited) {
+            wto << "#undef event_inherited\n";
+        }
+        
+            }
+        cout << "DBGMSG 5" << endl;
+
+    
+            parsed_object* t = i->second;
+            for (parsed_object::funcit it = t->funcs.begin(); it != t->funcs.end(); it++) //For each function called by this object
+            {
+                map<string,parsed_script*>::iterator subscr = scr_lookup.find(it->first); //Check if it's a script
+                if (subscr != scr_lookup.end() // If we've got ourselves a script
+                and subscr->second->pev_global) // And it has distinct code for use at the global scope (meaning it's more efficient locally)
+                {
+                    const char* comma = "";
+                    wto << "variant enigma::OBJ_" << i->second->name << "::_SCR_" << it->first << "(";
+                    for (int argn = 0; argn < it->second; argn++) //it->second gives max argument count used
+                    {
+                        wto << comma << "variant argument" << argn;
+                        comma = ", ";
+                    }
+                    wto << ")\n{\n  ";
+                    print_to_file(subscr->second->pev.code,subscr->second->pev.synt,subscr->second->pev.strc,subscr->second->pev.strs,2,wto);
+                    wto << "\n  return 0;\n}\n\n";
+                }
+            }
+        cout << "DBGMSG 6" << endl;
+        }
+        cout << "DBGMSG 7" << endl;
+    
+        wto << "namespace enigma\n{\n"
+        "  callable_script callable_scripts[] = {\n";
+        int scr_count = 0;
+        for (int i = 0; i < es->scriptCount; i++)
+        {
+            while (es->scripts[i].id > scr_count)
+            {
+                    wto << "    { NULL, -1 },\n";
+                    scr_count++;
+            }
+            scr_count++;
+            wto << "    { (variant(*)())_SCR_" << es->scripts[i].name << ", " << scr_lookup[es->scripts[i].name]->globargs << " },\n";
+        }
+        wto << "  };\n  \n";
+
+        cout << "DBGMSG 8" << endl;
+        wto << "  void constructor(object_basic* instance_b)\n  {\n"
+        "    //This is the universal create event code\n    object_locals* instance = (object_locals*)instance_b;\n    \n"
+        "    instance->xstart = instance->x;\n    instance->ystart = instance->y;\n    instance->xprevious = instance->x;\n    instance->yprevious = instance->y;\n\n"
+        "    instance->gravity=0;\n    instance->gravity_direction=270;\n    instance->friction=0;\n    \n"
+        "    \n"
+        "    instance->image_alpha = 1.0;\n    instance->image_angle = 0;\n    instance->image_blend = 0xFFFFFF;\n    instance->image_index = 0;\n"
+        "    instance->image_speed  = 1;\n    instance->image_xscale = 1;\n    instance->image_yscale = 1;\n    \n"
+        "instancecount++;\n    instance_count++;\n  }\n}\n";
+    wto.close();
+
+    parsed.clear();
 
     return 0;
 }
@@ -268,6 +414,10 @@ int writeObject(ofstream &wto, int i) {
     for (unsigned int e_i = 0; e_i < o->events.size; e_i++) {
         parsed_event &event = events[e_i];
 
+        // Populate our events list with this event if its not already in there.
+        if (find(ev.begin(), ev.end(), event.mainId) == ev.end())
+            ev.push_back(event.mainId);
+
         if (!event.code.empty()) {
             const string name = event_get_function_name(event.mainId, event.id);
             myevents << "        if (type == " << event.mainId << " && numb == " << event.id << ")\n";
@@ -288,21 +438,19 @@ int writeObject(ofstream &wto, int i) {
             event_def << "        return 0;\n";
             event_def << "    }\n";
 
-            if (groups.find(event.mainId) == groups.end())
-                groups[event.mainId] = "";
+            if (event_is_instance(event.mainId, event.id)) {
+                if (groups.find(event.mainId) == groups.end())
+                    groups[event.mainId] = "";
 
-            groups[event.mainId] += "        ";
+                groups[event.mainId] += "        ";
 
-            if (event_has_super_check(event.mainId, event.id)) 
-                groups[event.mainId] += "if (" + event_get_super_check_condition(event.mainId, event.id) + ") ";
-            
-            groups[event.mainId] += "myevent_" + name + "();\n";
+                if (event_has_super_check(event.mainId, event.id)) 
+                    groups[event.mainId] += "if (" + event_get_super_check_condition(event.mainId, event.id) + ") ";
+                
+                groups[event.mainId] += "myevent_" + name + "();\n";
+            }
 
         }
-
-        // Populate our events list with this event if its not already in there.
-        if (find(ev.begin(), ev.end(), event.mainId) == ev.end())
-            ev.push_back(event.mainId);
 
         if (setting::inherit_objects && parent != NULL && std::find(parent->events.begin(), parent->events.end(), event.mainId) != parent->events.end()) {
             // Populate our events list with our parent's event list.
@@ -350,7 +498,7 @@ int writeObject(ofstream &wto, int i) {
         tracker <<      "    enigma::inst_iter *ENOBJ_ITER_myevent_" << rootname << ";\n";
         activate <<     "        ENOBJ_ITER_myevent_" << rootname << " = enigma::event_" << rootname << "->add_inst(this);\n";
         deactivate <<   "        enigma::event_" << rootname << " ->unlink(ENOBJ_ITER_myevent_" << rootname << ");\n";
-        destructor <<   "        ENOBJ_ITER_myevent_" << rootname << " = enigma::event_" << rootname << "->add_inst(this);\n";
+        destructor <<   "        delete ENOBJ_ITER_myevent_" << rootname << ";\n";
     }
 
     // Write the bodies into the file.
@@ -383,6 +531,26 @@ int writeObject(ofstream &wto, int i) {
     "    ~OBJ_" << o->name << "() {\n"
     << destructor.str() <<
     "    }\n";
+
+    // OBJECT SCRIPTS
+    // for (parsed_object::funcit it = o->funcs.begin(); it != o->funcs.end(); it++) {
+    //     std::map<string,parsed_script *>::iterator subscr = scr_lookup.find(it->first);
+    //     parsed_script *script = subscr->second;
+    //     if (subscr != scr_lookup.end() && script->pev_global) {
+    //         wto << "    variant _SCR_" << it->first << "(";
+    //         for (int argn = 0; argn < it->second; argn++) {
+    //             if (argn == 0) {
+    //                 wto << "variant argument" << argn;
+    //             } else {
+    //                 wto << ", variant argument" << argn;
+    //             }
+    //         }
+    //         wto << ") {\n";
+    //         print_to_file(subscr->second->pev.code,subscr->second->pev.synt,subscr->second->pev.strc,subscr->second->pev.strs,2,wto);
+    //         wto << "        return 0;\n";
+    //         wto << "    }\n";
+    //     }
+    // }
 
     wto <<
     "};\n";
